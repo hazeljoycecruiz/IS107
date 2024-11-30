@@ -66,8 +66,8 @@ def preview_data(data):
 # Main Program
 if __name__ == "__main__":
     # File paths
-    input_file_path = r'C:\Users\User\Downloads\IS107 - WebApp\train.csv'
-    output_file_path = r'C:\Users\User\Downloads\IS107 - WebApp\cleaned_data_v3.csv'
+    input_file_path = r'C:\Users\User\Downloads\IS107-main\train.csv'
+    output_file_path = r'C:\Users\User\Downloads\IS107-main\cleaned_data_v3.csv'
 
     # Load the data
     raw_data = load_data(input_file_path)
