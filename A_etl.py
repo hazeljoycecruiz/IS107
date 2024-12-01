@@ -2,6 +2,15 @@ import pandas as pd
 
 # Step 1: Extract Data from CSV File
 def load_data(file_path):
+    """
+    Load data from a CSV file.
+
+    Parameters:
+    - file_path: str, path to the CSV file.
+
+    Returns:
+    - DataFrame containing the loaded data or None if an error occurs.
+    """
     try:
         data = pd.read_csv(file_path)
         print("Data successfully loaded.")
@@ -17,6 +26,15 @@ def load_data(file_path):
 
 # Step 2: Transform Data
 def clean_data(data):
+    """
+    Clean and transform the data.
+
+    Parameters:
+    - data: DataFrame, the raw data to be cleaned.
+
+    Returns:
+    - DataFrame containing the cleaned data.
+    """
     # a. Handle Missing Values
     data['Ship Date'] = data['Ship Date'].ffill()  # Forward fill missing ship dates
     data['Postal Code'] = data['Postal Code'].fillna(0)  # Fill missing postal codes with 0
@@ -49,6 +67,13 @@ def clean_data(data):
 
 # Step 3: Load Cleaned Data into a New File
 def save_cleaned_data(data, output_path):
+    """
+    Save the cleaned data to a CSV file.
+
+    Parameters:
+    - data: DataFrame, the cleaned data to be saved.
+    - output_path: str, path to save the cleaned CSV file.
+    """
     try:
         data.to_csv(output_path, index=False)
         print(f"Cleaned data saved to '{output_path}'.")
@@ -58,6 +83,12 @@ def save_cleaned_data(data, output_path):
 
 # Step 4: Preview the Cleaned Data
 def preview_data(data):
+    """
+    Preview the cleaned data.
+
+    Parameters:
+    - data: DataFrame, the cleaned data to be previewed.
+    """
     print("\nPreview of the cleaned data:")
     print(data.head())  # Show the first 5 rows
     print("\nSummary of the dataset after cleaning:")
