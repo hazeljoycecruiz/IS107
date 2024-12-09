@@ -126,6 +126,12 @@ h1 {
   }
 }
 
+<<<<<<< HEAD
+/* dashboard.py */
+
+
+=======
+>>>>>>> 88c8458477f1acfc9aafe547ee1f74161518613a
 /* Custom CSS for Dash Debug Menu */
 ._dash-debug-menu {
   position: fixed;
@@ -154,3 +160,7 @@ h1 {
 ._dash-debug-menu button:hover {
   background-color: #0056b3;
 }
+<<<<<<< HEAD
+
+=======
+>>>>>>> 88c8458477f1acfc9aafe547ee1f74161518613a
