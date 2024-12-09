@@ -1,4 +1,5 @@
-import streamlit as st
+import dash
+from dash import dcc, html, Input, Output, State, dash_table
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -6,219 +7,202 @@ from sqlalchemy import create_engine
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import r2_score, mean_squared_error
 import numpy as np
-from datetime import datetime, timedelta
+import warnings
+warnings.filterwarnings('ignore')
 
-class RetailAnalyticsApp:
+# Initialize the Dash app
+app = dash.Dash(__name__, suppress_callback_exceptions=True)
+
+# Load data using RetailAnalytics class from D_DataMining.py
+class RetailAnalytics:
     def __init__(self):
-        try:
-            self.engine = create_engine('postgresql://postgres:postgres@localhost/data_warehouse')
-            self.load_data()
-        except Exception as e:
-            st.error(f"Database connection error: {str(e)}")
-            self.data = None
+        self.engine = create_engine('postgresql://postgres:postgres@localhost/data_warehouse')
 
     def load_data(self):
-        """Load data from PostgreSQL database"""
-        try:
-            self.data = pd.read_sql("""
-                SELECT 
-                    o.order_id, o.order_date, o.ship_date, o.ship_mode,
-                    c.customer_id, c.customer_name, c.segment, c.region,
-                    p.product_id, p.product_name, p.category, p.sub_category,
-                    s.sales
-                FROM sales s
-                JOIN orders o ON s.order_id = o.order_id
-                JOIN customers c ON s.customer_id = c.customer_id
-                JOIN products p ON s.product_id = p.product_id
-            """, self.engine)
-            self.data['order_date'] = pd.to_datetime(self.data['order_date'])
-        except Exception as e:
-            st.error(f"Data loading error: {str(e)}")
-            self.data = None
+        query = """
+        SELECT 
+            c.customer_id, 
+            SUM(s.sales) as total_sales,
+            AVG(s.sales) as avg_sales,
+            COUNT(s.sales) as transaction_count,
+            MIN(t.order_date) as first_purchase,
+            MAX(t.order_date) as last_purchase,
+            EXTRACT(MONTH FROM MIN(t.order_date)) as month,
+            EXTRACT(YEAR FROM MIN(t.order_date)) as year
+        FROM sales_fact s
+        JOIN customer_dim c ON s.customer_id = c.customer_id
+        JOIN time_dim t ON s.time_id = t.time_id
+        GROUP BY c.customer_id
+        """
+        df = pd.read_sql(query, self.engine)
+        df['customer_lifetime'] = (
+            pd.to_datetime(df['last_purchase']) - 
+            pd.to_datetime(df['first_purchase'])
+        ).dt.days
+        df['purchase_frequency'] = df['transaction_count'] / df['customer_lifetime'].replace(0, 1)
+        return df
 
-    def run(self):
-        st.set_page_config(page_title="Retail Analytics Dashboard", layout="wide")
-        
-        if self.data is None:
-            st.error("Unable to load data. Please check your database connection.")
-            return
+    def perform_customer_segmentation(self, df, n_clusters=3):
+        features = ['total_sales', 'transaction_count']
+        X = df[features]
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+        kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+        df['segment'] = kmeans.fit_predict(X_scaled)
+        return df, kmeans
 
-        # Sidebar
-        st.sidebar.title("Navigation")
-        page = st.sidebar.radio("Select Page", 
-            ["Dashboard", "Customer Segmentation", "Sales Prediction", "Data Explorer"])
+    def perform_sales_prediction(self, df):
+        X = df[['avg_sales', 'transaction_count', 'purchase_frequency', 'month', 'year']]
+        y = df['total_sales']
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+        model = LinearRegression()
+        model.fit(X_train, y_train)
+        y_pred = model.predict(X_test)
+        mse = mean_squared_error(y_test, y_pred)
+        r2 = r2_score(y_test, y_pred)
+        return {
+            'model': model,
+            'mse': mse,
+            'r2': r2,
+            'predicted': y_pred,
+            'actual': y_test
+        }
 
-        if page == "Dashboard":
-            self.show_dashboard()
-        elif page == "Customer Segmentation":
-            self.show_customer_segmentation()
-        elif page == "Sales Prediction":
-            self.show_sales_prediction()
-        elif page == "Data Explorer":
-            self.show_data_explorer()
+analytics = RetailAnalytics()
+data = analytics.load_data()
 
-    def show_dashboard(self):
-        st.title("Retail Analytics Dashboard")
+# Define the layout of the app
+app.layout = html.Div([
+    dcc.Tabs(id='tabs', value='dashboard', children=[
+        dcc.Tab(label='Dashboard', value='dashboard'),
+        dcc.Tab(label='Customer Segmentation', value='customer_segmentation'),
+        dcc.Tab(label='Sales Prediction', value='sales_prediction'),
+        dcc.Tab(label='Data Explorer', value='data_explorer'),
+    ]),
+    html.Div(id='tabs-content')
+])
 
-        # Key Metrics
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric("Total Sales", f"${self.data['sales'].sum():,.2f}")
-        with col2:
-            st.metric("Total Orders", f"{self.data['order_id'].nunique():,}")
-        with col3:
-            st.metric("Total Customers", f"{self.data['customer_id'].nunique():,}")
-        with col4:
-            avg_order = self.data['sales'].sum() / self.data['order_id'].nunique()
-            st.metric("Average Order Value", f"${avg_order:,.2f}")
+@app.callback(Output('tabs-content', 'children'),
+              Input('tabs', 'value'))
+def render_content(tab):
+    if tab == 'dashboard':
+        return render_dashboard()
+    elif tab == 'customer_segmentation':
+        return render_customer_segmentation()
+    elif tab == 'sales_prediction':
+        return render_sales_prediction()
+    elif tab == 'data_explorer':
+        return render_data_explorer()
 
-        # Sales Trends
-        st.subheader("Sales Trends")
-        daily_sales = self.data.groupby('order_date')['sales'].sum().reset_index()
-        fig = px.line(daily_sales, x='order_date', y='sales', 
-                     title='Daily Sales Trend')
-        st.plotly_chart(fig, use_container_width=True)
+def render_dashboard():
+    if data is None:
+        return html.Div("Unable to load data. Please check your database connection.")
 
-        # Regional Analysis
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader("Sales by Region")
-            region_sales = self.data.groupby('region')['sales'].sum().reset_index()
-            fig = px.pie(region_sales, values='sales', names='region')
-            st.plotly_chart(fig, use_container_width=True)
-        
-        with col2:
-            st.subheader("Sales by Category")
-            category_sales = self.data.groupby('category')['sales'].sum().reset_index()
-            fig = px.bar(category_sales, x='category', y='sales')
-            st.plotly_chart(fig, use_container_width=True)
+    total_sales = data['total_sales'].sum()
+    total_customers = data['customer_id'].nunique()
+    avg_order_value = total_sales / total_customers
 
-    def show_customer_segmentation(self):
-        st.title("Customer Segmentation Analysis")
+    daily_sales = data.groupby('first_purchase')['total_sales'].sum().reset_index()
+    fig_sales_trend = px.line(daily_sales, x='first_purchase', y='total_sales', title='Daily Sales Trend')
 
-        try:
-            # Prepare customer metrics
-            customer_metrics = self.data.groupby('customer_id').agg({
-                'sales': ['sum', 'mean', 'count'],
-                'order_id': 'nunique'
-            }).reset_index()
-            customer_metrics.columns = ['customer_id', 'total_sales', 'avg_sales', 
-                                      'transaction_count', 'order_count']
+    return html.Div([
+        html.H1("Retail Analytics Dashboard"),
+        html.Div([
+            html.Div(f"Total Sales: ${total_sales:,.2f}", style={'width': '33%', 'display': 'inline-block'}),
+            html.Div(f"Total Customers: {total_customers:,}", style={'width': '33%', 'display': 'inline-block'}),
+            html.Div(f"Average Order Value: ${avg_order_value:,.2f}", style={'width': '33%', 'display': 'inline-block'}),
+        ]),
+        dcc.Graph(figure=fig_sales_trend)
+    ])
 
-            # Perform clustering
-            n_clusters = st.slider("Select number of clusters", 2, 6, 3)
-            
-            features = ['total_sales', 'transaction_count', 'order_count']
-            X = customer_metrics[features]
-            scaler = StandardScaler()
-            X_scaled = scaler.fit_transform(X)
-            
-            kmeans = KMeans(n_clusters=n_clusters, random_state=42)
-            customer_metrics['Segment'] = kmeans.fit_predict(X_scaled)
+def render_customer_segmentation():
+    if data is None:
+        return html.Div("Unable to load data. Please check your database connection.")
 
-            # Visualize segments
-            fig = px.scatter(customer_metrics, x='total_sales', y='transaction_count',
-                            color='Segment', title='Customer Segments')
-            st.plotly_chart(fig, use_container_width=True)
+    customer_segments, _ = analytics.perform_customer_segmentation(data)
+    fig_segments = px.scatter(customer_segments, x='total_sales', y='transaction_count', color='segment', title='Customer Segments')
 
-            # Segment Analysis
-            st.subheader("Segment Analysis")
-            segment_analysis = customer_metrics.groupby('Segment').agg({
-                'customer_id': 'count',
-                'total_sales': 'mean',
-                'transaction_count': 'mean'
-            }).round(2)
-            
-            # Display segment analysis as a simple table
-            st.write(segment_analysis)
+    segment_analysis = customer_segments.groupby('segment').agg({
+        'customer_id': 'count',
+        'total_sales': 'mean',
+        'transaction_count': 'mean'
+    }).round(2).reset_index()
 
-        except Exception as e:
-            st.error(f"Error in customer segmentation: {str(e)}")
-
-    def show_sales_prediction(self):
-        st.title("Sales Prediction")
-
-        try:
-            # Prepare time series data
-            monthly_sales = self.data.groupby(self.data['order_date'].dt.to_period('M'))['sales'].sum()
-            X = np.arange(len(monthly_sales)).reshape(-1, 1)
-            y = monthly_sales.values
-
-            # Train model
-            model = LinearRegression()
-            model.fit(X, y)
-
-            # Make future predictions
-            months_to_predict = st.slider("Number of months to predict", 1, 12, 6)
-            future_X = np.arange(len(X), len(X) + months_to_predict).reshape(-1, 1)
-            future_predictions = model.predict(future_X)
-
-            # Plot results
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=monthly_sales.index.astype(str), 
-                                    y=monthly_sales.values,
-                                    name='Historical Sales'))
-            fig.add_trace(go.Scatter(x=[str(monthly_sales.index[-1] + i + 1) 
-                                       for i in range(months_to_predict)],
-                                    y=future_predictions,
-                                    name='Predicted Sales'))
-            st.plotly_chart(fig, use_container_width=True)
-
-        except Exception as e:
-            st.error(f"Error in sales prediction: {str(e)}")
-
-    def show_data_explorer(self):
-        st.title("Data Explorer")
-
-        try:
-            # Filters
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                selected_region = st.multiselect("Select Region", 
-                                               options=self.data['region'].unique())
-            with col2:
-                selected_category = st.multiselect("Select Category", 
-                                                 options=self.data['category'].unique())
-            with col3:
-                date_range = st.date_input("Select Date Range",
-                                         [self.data['order_date'].min(),
-                                          self.data['order_date'].max()])
-
-            # Filter data
-            filtered_data = self.data.copy()
-            if selected_region:
-                filtered_data = filtered_data[filtered_data['region'].isin(selected_region)]
-            if selected_category:
-                filtered_data = filtered_data[filtered_data['category'].isin(selected_category)]
-            filtered_data = filtered_data[
-                (filtered_data['order_date'].dt.date >= date_range[0]) &
-                (filtered_data['order_date'].dt.date <= date_range[1])
+    return html.Div([
+        html.H1("Customer Segmentation Analysis"),
+        dcc.Graph(figure=fig_segments),
+        html.H2("Segment Analysis"),
+        dash_table.DataTable(
+            data=segment_analysis.to_dict('records'),
+            columns=[{'name': i, 'id': i} for i in segment_analysis.columns],
+            page_size=5,
+            style_table={'overflowX': 'auto'},
+            style_cell={'textAlign': 'left', 'padding': '5px'},
+            style_header={
+                'backgroundColor': 'rgb(230, 230, 230)',
+                'fontWeight': 'bold'
+            },
+            style_data_conditional=[
+                {
+                    'if': {'row_index': 'odd'},
+                    'backgroundColor': 'rgb(248, 248, 248)'}
             ]
+        )
+    ])
 
-            # Show filtered data
-            st.write("Filtered Data Preview:")
-            st.write(filtered_data.head(1000))  # Show only first 1000 rows
+def render_sales_prediction():
+    if data is None:
+        return html.Div("Unable to load data. Please check your database connection.")
 
-            # Download button
-            if st.button("Download Filtered Data"):
-                csv = filtered_data.to_csv(index=False)
-                st.download_button(
-                    label="Download CSV",
-                    data=csv,
-                    file_name="filtered_data.csv",
-                    mime="text/csv"
-                )
+    prediction_results = analytics.perform_sales_prediction(data)
+    y_test = prediction_results['actual']
+    y_pred = prediction_results['predicted']
 
-        except Exception as e:
-            st.error(f"Error in data explorer: {str(e)}")
+    fig_prediction = go.Figure()
+    fig_prediction.add_trace(go.Scatter(x=y_test.index, y=y_test, mode='markers', name='Actual Sales'))
+    fig_prediction.add_trace(go.Scatter(x=y_test.index, y=y_pred, mode='lines', name='Predicted Sales'))
 
-def main():
-    app = RetailAnalyticsApp()
-    app.run()
+    report_summary = f"""
+    Sales Prediction Analysis
+    -------------------------
+    Model Performance:
+    - R² Score: {prediction_results['r2']:.3f}
+    - RMSE: ${prediction_results['mse']:,.2f}
+    """
 
-if __name__ == "__main__":
-    main()
+    return html.Div([
+        html.H1("Sales Prediction"),
+        dcc.Graph(figure=fig_prediction),
+        html.H2("Report Summary"),
+        html.Pre(report_summary)
+    ])
+
+def render_data_explorer():
+    if data is None:
+        return html.Div("Unable to load data. Please check your database connection.")
+
+    return html.Div([
+        html.H1("Data Explorer"),
+        dash_table.DataTable(
+            data=data.to_dict('records'),
+            columns=[{'name': i, 'id': i} for i in data.columns],
+            page_size=10,
+            style_table={'overflowX': 'auto'},
+            style_cell={'textAlign': 'left', 'padding': '5px'},
+            style_header={
+                'backgroundColor': 'rgb(230, 230, 230)',
+                'fontWeight': 'bold'
+            },
+            style_data_conditional=[
+                {
+                    'if': {'row_index': 'odd'},
+                    'backgroundColor': 'rgb(248, 248, 248)'}
+            ]
+        )
+    ])
+
+if __name__ == '__main__':
+    app.run_server(debug=True, dev_tools_ui=True, dev_tools_props_check=True)
