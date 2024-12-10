@@ -1,108 +1,152 @@
-# D_DataMining.py
-
 import pandas as pd
-from sklearn.cluster import KMeans
-from sklearn.naive_bayes import GaussianNB
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, classification_report
-import matplotlib.pyplot as plt
-import seaborn as sns
-from A_etl import load_data, clean_data
+import dash
+from dash import dcc, html
+from dash.dependencies import Input, Output
+import plotly.express as px
+from sqlalchemy import create_engine
 
-# Load and clean data
-raw_data = load_data('C:/Users/USER/Downloads/IS107/train.csv')
-cleaned_data = clean_data(raw_data)
+# Database connection setup
+db_name = "data_warehouse"
+db_user = "postgres"
+db_password = "postgres"
+db_host = "localhost"
+db_port = 5432
+engine = create_engine(f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}")
 
-# Check the columns in the cleaned data
-print("Columns in cleaned data:", cleaned_data.columns)
-
-# Customer Segmentation using KMeans Clustering
-def customer_segmentation(data):
+# Fetch Data from Database
+def load_data():
+    sales_query = """
+        SELECT s.invoice_no, s.customer_id, s.quantity, s.total_sales, s.product_id, 
+               t.invoice_date, c.country, p.description AS product_description
+        FROM sales_fact s
+        JOIN time_dimension t ON s.time_id = t.time_id
+        JOIN country_dimension c ON s.country_id = c.country_id
+        JOIN product_dimension p ON s.product_id = p.product_id
     """
-    Perform customer segmentation using KMeans clustering.
+    sales_data = pd.read_sql(sales_query, engine)
+    return sales_data
 
-    Parameters:
-    - data: DataFrame, the cleaned data to be used for clustering.
+# Load the data
+data = load_data()
 
-    Returns:
-    - DataFrame with an additional 'Cluster' column indicating the cluster assignment.
-    """
-    print("Performing customer segmentation using KMeans clustering...")
+# Initialize Dash app
+app = dash.Dash(__name__)
+app.title = "Sales Dashboard"
 
-    # Adjust the feature selection based on available columns
-    # Use 'Sales' and any other available numeric columns
-    feature_columns = ['Sales']
-    available_features = [col for col in feature_columns if col in data.columns]
+# Layout
+app.layout = html.Div([
+    html.H1("Sales Dashboard", style={'textAlign': 'center'}),
     
-    if len(available_features) < 1:
-        print("Available columns for clustering:", available_features)
-        raise ValueError("Not enough features available for clustering. Check your dataset.")
-
-    # Select features for clustering
-    features = data[available_features]
+    # Filters
+    html.Div([
+        html.Label("Date Range:"),
+        dcc.DatePickerRange(
+            id='date-picker',
+            start_date=data['invoice_date'].min(),
+            end_date=data['invoice_date'].max(),
+            display_format='YYYY-MM-DD'
+        ),
+        html.Label("Countries:"),
+        dcc.Dropdown(
+            id='country-filter',
+            options=[{'label': country, 'value': country} for country in data['country'].unique()],
+            multi=True,
+            placeholder="Select countries"
+        ),
+        html.Label("Products:"),
+        dcc.Dropdown(
+            id='product-filter',
+            options=[{'label': product, 'value': product} for product in data['product_description'].unique()],
+            multi=True,
+            placeholder="Select products"
+        ),
+    ], style={'margin': '20px'}),
     
-    # Normalize the data
-    features_normalized = (features - features.mean()) / features.std()
+    # Key Metrics
+    html.Div([
+        html.Div(id='total-sales-metric', style={'margin': '10px', 'display': 'inline-block'}),
+        html.Div(id='total-quantity-metric', style={'margin': '10px', 'display': 'inline-block'}),
+        html.Div(id='top-product-metric', style={'margin': '10px', 'display': 'inline-block'}),
+        html.Div(id='top-region-metric', style={'margin': '10px', 'display': 'inline-block'}),
+    ], style={'textAlign': 'center', 'margin': '20px'}),
     
-    # Apply KMeans clustering
-    kmeans = KMeans(n_clusters=3, random_state=42)
-    data['Cluster'] = kmeans.fit_predict(features_normalized)
+    # Visualizations
+    html.Div([
+        dcc.Graph(id='sales-by-region'),
+        dcc.Graph(id='top-products'),
+        dcc.Graph(id='sales-over-time'),
+        dcc.Graph(id='quantity-by-product')
+    ])
+])
+
+# Callbacks
+@app.callback(
+    [
+        Output('total-sales-metric', 'children'),
+        Output('total-quantity-metric', 'children'),
+        Output('top-product-metric', 'children'),
+        Output('top-region-metric', 'children'),
+        Output('sales-by-region', 'figure'),
+        Output('top-products', 'figure'),
+        Output('sales-over-time', 'figure'),
+        Output('quantity-by-product', 'figure'),
+    ],
+    [
+        Input('date-picker', 'start_date'),
+        Input('date-picker', 'end_date'),
+        Input('country-filter', 'value'),
+        Input('product-filter', 'value'),
+    ]
+)
+def update_dashboard(start_date, end_date, countries, products):
+    # Filter data
+    filtered_data = data.copy()
     
-    # Visualize the clusters
-    sns.pairplot(data, hue='Cluster', vars=available_features)
-    plt.title('Customer Segmentation')
-    plt.show()
-
-    print("Customer segmentation completed. Clusters have been visualized.")
-
-# Predictive Analysis using Naive Bayes
-def predictive_analysis(data):
-    """
-    Perform predictive analysis using Naive Bayes.
-
-    Parameters:
-    - data: DataFrame, the cleaned data to be used for prediction.
-
-    Returns:
-    - None
-    """
-    print("Performing predictive analysis using Naive Bayes...")
-
-    # Prepare the data
-    data['Order Date'] = pd.to_datetime(data['Order Date'])
-    data['Year'] = data['Order Date'].dt.year
-    # Use 'Sales' and 'Year' for prediction
-    features = data[['Sales', 'Year']]
-    target = data['Segment']
+    if start_date and end_date:
+        filtered_data = filtered_data[
+            (filtered_data['invoice_date'] >= start_date) & 
+            (filtered_data['invoice_date'] <= end_date)
+        ]
     
-    # Split the data
-    X_train, X_test, y_train, y_test = train_test_split(features, target, test_size=0.3, random_state=42)
+    if countries:
+        filtered_data = filtered_data[filtered_data['country'].isin(countries)]
     
-    # Train Naive Bayes model
-    model = GaussianNB()
-    model.fit(X_train, y_train)
+    if products:
+        filtered_data = filtered_data[filtered_data['product_description'].isin(products)]
     
-    # Predict and evaluate
-    predictions = model.predict(X_test)
-    print("Accuracy:", accuracy_score(y_test, predictions))
-    print("Classification Report:\n", classification_report(y_test, predictions))
+    # Key Metrics
+    total_sales = filtered_data['total_sales'].sum()
+    total_quantity = filtered_data['quantity'].sum()
+    top_product = filtered_data.groupby('product_description')['total_sales'].sum().idxmax() if not filtered_data.empty else "No Data"
+    top_region = filtered_data.groupby('country')['total_sales'].sum().idxmax() if not filtered_data.empty else "No Data"
 
-    print("Predictive analysis completed. Results have been printed.")
+    # Sales by Region
+    sales_by_region = filtered_data.groupby('country')['total_sales'].sum().reset_index()
+    fig1 = px.bar(sales_by_region, x='country', y='total_sales', title="Total Sales by Region", labels={'total_sales': 'Total Sales ($)'})
 
-# Main function
-if __name__ == "__main__":
-    try:
-        # Perform customer segmentation
-        customer_segmentation(cleaned_data)
-    except ValueError as e:
-        print(e)
-    
-    # Perform predictive analysis
-    predictive_analysis(cleaned_data)
+    # Top Products
+    top_products = filtered_data.groupby('product_description')['total_sales'].sum().nlargest(10).reset_index()
+    fig2 = px.bar(top_products, x='product_description', y='total_sales', title="Top 10 Selling Products", labels={'total_sales': 'Total Sales ($)'})
 
-    # Insights and Report
-    print("\nReport:")
-    print("1. Customer Segmentation: Customers are segmented into 3 clusters based on available features.")
-    print("   This helps in identifying different customer groups for targeted marketing strategies.")
-    print("2. Predictive Analysis: The Naive Bayes model predicts customer segments with an accuracy score.")
-    print("   This can be valuable for forecasting future sales and understanding customer behavior.")
+    # Sales Over Time
+    sales_over_time = filtered_data.groupby('invoice_date')['total_sales'].sum().reset_index()
+    fig3 = px.line(sales_over_time, x='invoice_date', y='total_sales', title="Sales Over Time", labels={'total_sales': 'Total Sales ($)'})
+
+    # Quantity Sold by Product
+    quantity_by_product = filtered_data.groupby('product_description')['quantity'].sum().nlargest(10).reset_index()
+    fig4 = px.bar(quantity_by_product, x='product_description', y='quantity', title="Quantity Sold by Product", labels={'quantity': 'Quantity Sold'})
+
+    return (
+        f"Total Sales: ${total_sales:,.2f}",
+        f"Total Quantity Sold: {total_quantity:,}",
+        f"Top-Selling Product: {top_product}",
+        f"Top Region: {top_region}",
+        fig1,
+        fig2,
+        fig3,
+        fig4
+    )
+
+# Run the app
+if __name__ == '__main__':
+    app.run_server(debug=True)
