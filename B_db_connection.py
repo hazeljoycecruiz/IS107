@@ -1,5 +1,5 @@
 import pandas as pd
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
 
 # Database connection setup
 db_name = "data_warehouse"
@@ -12,6 +12,12 @@ engine = create_engine(f"postgresql://{db_user}:{db_password}@{db_host}:{db_port
 # Load cleaned data
 csv_path = "cleaned_data.csv"
 cleaned_data = pd.read_csv(csv_path)
+
+# Convert data types to match the database schema
+cleaned_data['CustomerID'] = cleaned_data['CustomerID'].astype(int)
+cleaned_data['Quantity'] = cleaned_data['Quantity'].astype(int)
+cleaned_data['UnitPrice'] = cleaned_data['UnitPrice'].astype(float)
+cleaned_data['InvoiceDate'] = pd.to_datetime(cleaned_data['InvoiceDate'])
 
 # Load country_dimension with deduplication
 try:
@@ -32,49 +38,65 @@ try:
     customer_dim = customer_dim.merge(country_map, how='left', on='country')  # Map country_id
     customer_dim = customer_dim[['customer_id', 'country_id']]
 
-    # Prepare insert query to handle duplicates
-    insert_query = """
-    INSERT INTO customer_dimension (customer_id, country_id)
-    VALUES (:customer_id, :country_id)
-    ON CONFLICT (customer_id) DO NOTHING;
-    """
+    # Retrieve existing customers
+    existing_customers = pd.read_sql("SELECT customer_id FROM customer_dimension", engine)
 
-    # Insert data into the database, using ON CONFLICT DO NOTHING
-    with engine.connect() as conn:
-        for _, row in customer_dim.iterrows():
-            conn.execute(text(insert_query), {'customer_id': row['customer_id'], 'country_id': row['country_id']})
+    # Filter out existing customers
+    new_customers = customer_dim[~customer_dim['customer_id'].isin(existing_customers['customer_id'])]
 
-    print("Customers successfully loaded into customer_dimension.")
+    # Check if new_customers is empty before inserting
+    if new_customers.empty:
+        print("No new customers to load into customer_dimension.")
+    else:
+        # Insert new customers into the database
+        for _, row in new_customers.iterrows():
+            try:
+                row.to_frame().T.to_sql('customer_dimension', engine, if_exists='append', index=False)
+            except Exception as e:
+                print(f"Error inserting customer_id {row['customer_id']}: {e}")
+        print("New customers successfully loaded into customer_dimension.")
 except Exception as e:
     print(f"Error during loading data into customer_dimension: {e}")
 
-# Load product_dimension
+# Load product_dimension with deduplication
 try:
+    existing_products = pd.read_sql("SELECT stockcode FROM product_dimension", engine)
     product_dim = cleaned_data[['StockCode', 'Description', 'UnitPrice']].drop_duplicates().rename(columns={
         'StockCode': 'stockcode',
         'Description': 'description',
         'UnitPrice': 'unit_price'
     })
-    product_dim.to_sql('product_dimension', engine, if_exists='append', index=False)
-    print("Products successfully loaded into product_dimension.")
+    product_dim = product_dim[~product_dim['stockcode'].isin(existing_products['stockcode'])]
+    if not product_dim.empty:
+        product_dim.to_sql('product_dimension', engine, if_exists='append', index=False)
+        print("Products successfully loaded into product_dimension.")
+    else:
+        print("No new products to load into product_dimension.")
 except Exception as e:
     print(f"Error during loading data into product_dimension: {e}")
 
-# Load time_dimension
+# Load time_dimension with deduplication and filtering
 try:
-    time_dim = cleaned_data[['InvoiceDate']].drop_duplicates()
-    time_dim['year'] = pd.to_datetime(time_dim['InvoiceDate']).dt.year
-    time_dim['month'] = pd.to_datetime(time_dim['InvoiceDate']).dt.month
-    time_dim['day'] = pd.to_datetime(time_dim['InvoiceDate']).dt.day
-    time_dim.rename(columns={'InvoiceDate': 'invoice_date'}, inplace=True)
-    time_dim.to_sql('time_dimension', engine, if_exists='append', index=False)
-    print("Time data successfully loaded into time_dimension.")
+    existing_dates = pd.read_sql("SELECT DISTINCT invoice_date FROM time_dimension", engine)
+    existing_dates['invoice_date'] = pd.to_datetime(existing_dates['invoice_date'])
+    time_dim = cleaned_data[['InvoiceDate']].drop_duplicates().rename(columns={'InvoiceDate': 'invoice_date'})
+    time_dim['invoice_date'] = pd.to_datetime(time_dim['invoice_date'])
+    time_dim = time_dim[~time_dim['invoice_date'].isin(existing_dates['invoice_date'])]
+    time_dim['year'] = time_dim['invoice_date'].dt.year
+    time_dim['month'] = time_dim['invoice_date'].dt.month
+    time_dim['day'] = time_dim['invoice_date'].dt.day
+    if not time_dim.empty:
+        time_dim.to_sql('time_dimension', engine, if_exists='append', index=False)
+        print("Time data successfully loaded into time_dimension.")
+    else:
+        print("No new time data to load into time_dimension.")
 except Exception as e:
     print(f"Error during loading data into time_dimension: {e}")
 
-# Ensure cleaned_data has the necessary columns
-cleaned_data['quantity'] = cleaned_data['Quantity']  # Assuming 'Quantity' is available in the raw data
-cleaned_data['total_sales'] = cleaned_data['quantity'] * cleaned_data['UnitPrice']  # Assuming 'UnitPrice' exists
+
+
+# Calculate total_sales
+cleaned_data['total_sales'] = cleaned_data['Quantity'] * cleaned_data['UnitPrice']
 
 # Load sales_fact with proper foreign key mappings
 try:
@@ -95,26 +117,23 @@ try:
     cleaned_data = cleaned_data[cleaned_data['CustomerID'].isin(existing_customers['customer_id'])]
 
     # Prepare sales_fact by grouping data for the same customer purchasing different items
-    sales_fact = cleaned_data.groupby(['CustomerID', 'country_id', 'time_id', 'InvoiceNo']) \
+    sales_fact = cleaned_data.groupby(['CustomerID', 'country_id', 'time_id', 'InvoiceNo', 'product_id']) \
         .agg({
-            'product_id': 'unique',  # All unique product_ids for this transaction
-            'quantity': 'sum',  # Total quantity for each transaction
-            'total_sales': 'sum'  # Total sales for this transaction
+            'Quantity': 'sum',
+            'total_sales': 'sum'
         }).reset_index()
 
-    # Flatten 'product_id' (unique products per transaction) to be inserted correctly into sales_fact
-    sales_fact['product_id'] = sales_fact['product_id'].apply(lambda x: ','.join(map(str, x)))
-
-    # Prepare sales_fact columns for insertion
     sales_fact = sales_fact.rename(columns={
         'InvoiceNo': 'invoice_no',
         'CustomerID': 'customer_id',
-        'quantity': 'quantity',
+        'Quantity': 'quantity',
         'total_sales': 'total_sales'
     })
 
-    # Load sales_fact into the database
-    sales_fact.to_sql('sales_fact', engine, if_exists='append', index=False)
-    print("Sales data successfully loaded into sales_fact.")
+    if not sales_fact.empty:
+        sales_fact.to_sql('sales_fact', engine, if_exists='append', index=False)
+        print("Sales data successfully loaded into sales_fact.")
+    else:
+        print("No new sales data to load into sales_fact.")
 except Exception as e:
     print(f"Error during loading data into sales_fact: {e}")

@@ -20,19 +20,17 @@ try:
     data_cleaned = data.dropna(subset=['CustomerID', 'StockCode', 'InvoiceDate']).copy()
     data_cleaned['Description'] = data_cleaned['Description'].fillna('Unknown Product')
 
+    # Convert CustomerID to integer
+    data_cleaned['CustomerID'] = data_cleaned['CustomerID'].astype(int)
+
     # Remove invalid records
     data_cleaned = data_cleaned[(data_cleaned['Quantity'] > 0) & (data_cleaned['UnitPrice'] > 0)]
 
     # Create new columns
-    data_cleaned['TotalPrice'] = data_cleaned['Quantity'] * data_cleaned['UnitPrice']
     data_cleaned['InvoiceDate'] = pd.to_datetime(data_cleaned['InvoiceDate'])
     data_cleaned['InvoiceYear'] = data_cleaned['InvoiceDate'].dt.year
     data_cleaned['InvoiceMonth'] = data_cleaned['InvoiceDate'].dt.month
     data_cleaned['InvoiceDay'] = data_cleaned['InvoiceDate'].dt.day
-
-    # Handle outliers
-    price_cap = data_cleaned['TotalPrice'].quantile(0.99)
-    data_cleaned['TotalPrice'] = np.where(data_cleaned['TotalPrice'] > price_cap, price_cap, data_cleaned['TotalPrice'])
 
     # Deduplicate key columns
     data_cleaned = data_cleaned.drop_duplicates()

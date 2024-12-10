@@ -20,18 +20,17 @@ class RetailAnalytics:
         """Load data from PostgreSQL database"""
         query = """
         SELECT 
-            c.customer_id, 
-            SUM(s.sales) as total_sales,
-            AVG(s.sales) as avg_sales,
-            COUNT(s.sales) as transaction_count,
-            MIN(t.order_date) as first_purchase,
-            MAX(t.order_date) as last_purchase,
-            EXTRACT(MONTH FROM MIN(t.order_date)) as month,
-            EXTRACT(YEAR FROM MIN(t.order_date)) as year
-        FROM sales_fact s
-        JOIN customer_dim c ON s.customer_id = c.customer_id
-        JOIN time_dim t ON s.time_id = t.time_id
-        GROUP BY c.customer_id
+            sf.customer_id, 
+            SUM(sf.total_sales) as total_sales,
+            AVG(sf.total_sales) as avg_sales,
+            COUNT(sf.invoice_no) as transaction_count,
+            MIN(td.invoice_date) as first_purchase,
+            MAX(td.invoice_date) as last_purchase,
+            EXTRACT(MONTH FROM MIN(td.invoice_date)) as month,
+            EXTRACT(YEAR FROM MIN(td.invoice_date)) as year
+        FROM sales_fact sf
+        JOIN time_dimension td ON sf.time_id = td.time_id
+        GROUP BY sf.customer_id
         """
         df = pd.read_sql(query, self.engine)
         
@@ -94,10 +93,12 @@ class RetailAnalytics:
         # Plot Actual vs. Predicted Sales
         plt.figure(figsize=(10, 6))
         plt.scatter(y_test, y_pred, alpha=0.6)
-        plt.xlabel('Actual Sales')
-        plt.ylabel('Predicted Sales')
-        plt.title('Actual vs Predicted Sales')
+        plt.xlabel('Actual Total Sales')
+        plt.ylabel('Predicted Total Sales')
+        plt.title('Predictive Analysis using Linear Regression')
         plt.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], color='red', linewidth=2, label='Ideal: y = x')
+        plt.text(0.05, 0.95, f'y = -9.50 + (1.55 * quantity) + (4.45 * unitprice)\nMSE: {mse:.2f}',
+                 transform=plt.gca().transAxes, fontsize=10, verticalalignment='top')
         plt.legend()
         plt.show()
 
@@ -127,3 +128,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
