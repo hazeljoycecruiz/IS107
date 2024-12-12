@@ -1,43 +1,65 @@
 import pandas as pd
-import numpy as np
-import os
+
 
 # Step 1: Extract
-file_path = 'Online Retail.xlsx'  # Path to the dataset
-if not os.path.exists(file_path):
-    print(f"Error: The file {file_path} does not exist.")
-    exit()
-
-try:
-    data = pd.read_excel(file_path)
-except Exception as e:
-    print(f"Error reading the Excel file: {e}")
-    exit()
+file_path = 'Online Retail.xlsx'
+data = pd.read_excel(file_path)
 
 # Step 2: Transform
 try:
+    # Count rows in the uncleaned data
+    uncleaned_row_count = data.shape[0]
+    print(f"Number of rows in uncleaned data: {uncleaned_row_count}")
+
     # Clean missing values
-    data_cleaned = data.dropna(subset=['CustomerID', 'StockCode', 'InvoiceDate']).copy()
-    data_cleaned['Description'] = data_cleaned['Description'].fillna('Unknown Product')
+    data = data.dropna(subset=['CustomerID', 'InvoiceDate'])
+    data['CustomerID'] = data['CustomerID'].astype(int)
+    
+    # Fill missing descriptions based on existing descriptions for the same StockCode
+    description_map = data.dropna(subset=['Description']).groupby('StockCode')['Description'].first()
+    data['Description'] = data.apply(
+        lambda row: description_map[row['StockCode']] if pd.isna(row['Description']) and row['StockCode'] in description_map else row['Description'],
+        axis=1
+    )
 
-    # Convert CustomerID to integer
-    data_cleaned['CustomerID'] = data_cleaned['CustomerID'].astype(int)
+    # Identify unique StockCodes with missing descriptions
+    unique_stockcodes = data[data['Description'].isna()]['StockCode'].unique()
 
-    # Remove invalid records
-    data_cleaned = data_cleaned[(data_cleaned['Quantity'] > 0) & (data_cleaned['UnitPrice'] > 0)]
+    # Fill missing descriptions for unique StockCodes
+    data.loc[data['StockCode'].isin(unique_stockcodes) & data['Description'].isna(), 'Description'] = 'Unknown Product'
+
+    # Remove rows with zero and negative quantities
+    data = data[data['Quantity'] > 0]
+
+    # Remove invalid records with non-positive UnitPrice
+    data = data[data['UnitPrice'] > 0]
+
+    # Calculate the 1st and 99th percentiles for Quantity and UnitPrice
+    quantity_thresholds = data['Quantity'].quantile([0.01, 0.99])
+    unitprice_thresholds = data['UnitPrice'].quantile([0.01, 0.99])
+
+    # Filter rows to keep only values within the defined percentile range
+    data = data[
+        data['Quantity'].between(quantity_thresholds.iloc[0], quantity_thresholds.iloc[1]) &
+        data['UnitPrice'].between(unitprice_thresholds.iloc[0], unitprice_thresholds.iloc[1])
+    ]
 
     # Create new columns
-    data_cleaned['InvoiceDate'] = pd.to_datetime(data_cleaned['InvoiceDate'])
-    data_cleaned['InvoiceYear'] = data_cleaned['InvoiceDate'].dt.year
-    data_cleaned['InvoiceMonth'] = data_cleaned['InvoiceDate'].dt.month
-    data_cleaned['InvoiceDay'] = data_cleaned['InvoiceDate'].dt.day
+    data['InvoiceDate'] = pd.to_datetime(data['InvoiceDate'])
+    data['InvoiceYear'] = data['InvoiceDate'].dt.year
+    data['InvoiceMonth'] = data['InvoiceDate'].dt.month
+    data['InvoiceDay'] = data['InvoiceDate'].dt.day
 
     # Deduplicate key columns
-    data_cleaned = data_cleaned.drop_duplicates()
+    # data = data.drop_duplicates()
+
+    # Count rows in the cleaned data
+    cleaned_row_count = data.shape[0]
+    print(f"Number of rows in cleaned data: {cleaned_row_count}")
 
     # Save cleaned data
     output_csv_path = 'cleaned_data.csv'
-    data_cleaned.to_csv(output_csv_path, index=False)
+    data.to_csv(output_csv_path, index=False)
     print(f"Cleaned data saved to {output_csv_path}")
 except Exception as e:
     print(f"Error during data transformation: {e}")
