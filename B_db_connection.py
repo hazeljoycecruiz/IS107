@@ -12,12 +12,8 @@ engine = create_engine(f"postgresql://{db_user}:{db_password}@{db_host}:{db_port
 # Load cleaned data
 csv_path = "cleaned_data.csv"
 cleaned_data = pd.read_csv(csv_path)
-
-# Convert data types to match the database schema
-cleaned_data['CustomerID'] = cleaned_data['CustomerID'].astype(int)
-cleaned_data['Quantity'] = cleaned_data['Quantity'].astype(int)
-cleaned_data['UnitPrice'] = cleaned_data['UnitPrice'].astype(float)
 cleaned_data['InvoiceDate'] = pd.to_datetime(cleaned_data['InvoiceDate'])
+
 
 # Load country_dimension with deduplication
 try:
@@ -95,8 +91,8 @@ except Exception as e:
 
 
 
-# Calculate total_sales
-cleaned_data['total_sales'] = cleaned_data['Quantity'] * cleaned_data['UnitPrice']
+# Calculate total_price
+cleaned_data['total_price'] = (cleaned_data['Quantity'] * cleaned_data['UnitPrice']).round(2)
 
 # Load sales_fact with proper foreign key mappings
 try:
@@ -120,14 +116,14 @@ try:
     sales_fact = cleaned_data.groupby(['CustomerID', 'country_id', 'time_id', 'InvoiceNo', 'product_id']) \
         .agg({
             'Quantity': 'sum',
-            'total_sales': 'sum'
+            'total_price': 'sum'
         }).reset_index()
 
     sales_fact = sales_fact.rename(columns={
         'InvoiceNo': 'invoice_no',
         'CustomerID': 'customer_id',
         'Quantity': 'quantity',
-        'total_sales': 'total_sales'
+        'total_price': 'total_price'
     })
 
     if not sales_fact.empty:

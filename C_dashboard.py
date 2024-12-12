@@ -14,7 +14,7 @@ engine = create_engine(f"postgresql://{db_user}:{db_password}@{db_host}:{db_port
 
 # Load data from the database
 sales_query = """
-SELECT sf.customer_id, sf.quantity, sf.total_sales, sf.invoice_no, sf.time_id, pd.description AS product_description,
+SELECT sf.customer_id, pd.unit_price, sf.quantity, sf.total_price, sf.invoice_no, sf.time_id, pd.description AS product_description,
        td.invoice_date, td.year, td.month, cd.country
 FROM sales_fact sf
 JOIN product_dimension pd ON sf.product_id = pd.product_id
@@ -125,32 +125,32 @@ def update_dashboard(start_date, end_date, selected_countries, selected_products
         filtered_data = filtered_data[filtered_data['product_description'].isin(selected_products)]
 
     # Key metrics
-    total_sales = f"${filtered_data['total_sales'].sum():,.2f}"
+    total_price = f"${filtered_data['total_price'].sum():,.2f}"
     total_quantity = f"{filtered_data['quantity'].sum():,}"
     unique_customers = f"{filtered_data['customer_id'].nunique()}"
 
     # Sales by Region
     sales_by_region_fig = px.bar(
-        filtered_data.groupby('country')['total_sales'].sum().reset_index(),
-        x='country', y='total_sales',
-        title="Sales by Region", labels={'total_sales': 'Total Sales', 'country': 'Country'}
+        filtered_data.groupby('country')['total_price'].sum().reset_index(),
+        x='country', y='total_price',
+        title="Sales by Region", labels={'total_price': 'Total Sales', 'country': 'Country'}
     )
 
     # Top Products
     top_products_fig = px.bar(
-        filtered_data.groupby('product_description')['total_sales'].sum().nlargest(10).reset_index(),
-        x='product_description', y='total_sales',
-        title="Top 10 Products by Sales", labels={'total_sales': 'Total Sales', 'product_description': 'Product'}
+        filtered_data.groupby('product_description')['total_price'].sum().nlargest(10).reset_index(),
+        x='product_description', y='total_price',
+        title="Top 10 Products by Sales", labels={'total_price': 'Total Sales', 'product_description': 'Product'}
     )
 
     # Sales Trend
     sales_trend_fig = px.line(
-        filtered_data.groupby('invoice_date')['total_sales'].sum().reset_index(),
-        x='invoice_date', y='total_sales',
-        title="Sales Trend Over Time", labels={'total_sales': 'Total Sales', 'invoice_date': 'Date'}
+        filtered_data.groupby('invoice_date')['total_price'].sum().reset_index(),
+        x='invoice_date', y='total_price',
+        title="Sales Trend Over Time", labels={'total_price': 'Total Sales', 'invoice_date': 'Date'}
     )
 
-    return total_sales, total_quantity, unique_customers, sales_by_region_fig, top_products_fig, sales_trend_fig
+    return total_price, total_quantity, unique_customers, sales_by_region_fig, top_products_fig, sales_trend_fig
 
 # Run the app
 if __name__ == "__main__":

@@ -21,8 +21,8 @@ class RetailAnalytics:
         query = """
         SELECT 
             sf.customer_id, 
-            SUM(sf.total_sales) as total_sales,
-            AVG(sf.total_sales) as avg_sales,
+            SUM(sf.total_price) as total_price,
+            AVG(sf.total_price) as avg_sales,  -- Change this line
             COUNT(sf.invoice_no) as transaction_count,
             MIN(td.invoice_date) as first_purchase,
             MAX(td.invoice_date) as last_purchase,
@@ -43,10 +43,11 @@ class RetailAnalytics:
         
         return df
 
+
     def perform_customer_segmentation(self, df, n_clusters=3):
         """Perform customer segmentation using K-means clustering."""
         # Select features for clustering
-        features = ['total_sales', 'transaction_count']
+        features = ['total_price', 'transaction_count']
         X = df[features]
 
         # Scale features
@@ -59,7 +60,7 @@ class RetailAnalytics:
 
         # Visualize clusters
         plt.figure(figsize=(10, 6))
-        sns.scatterplot(data=df, x='total_sales', y='transaction_count', hue='segment', palette='viridis')
+        sns.scatterplot(data=df, x='total_price', y='transaction_count', hue='segment', palette='viridis')
         plt.title('Customer Segmentation Using K-Means Clustering')
         plt.xlabel('Total Sales')
         plt.ylabel('Transaction Count')
@@ -71,7 +72,7 @@ class RetailAnalytics:
         """Perform sales prediction using Linear Regression."""
         # Features and target
         X = df[['avg_sales', 'transaction_count', 'purchase_frequency', 'month', 'year']]
-        y = df['total_sales']
+        y = df['total_price']
 
         # Train-test split
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
