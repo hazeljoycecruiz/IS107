@@ -84,8 +84,8 @@ class RetailAnalytics:
         plt.figure(figsize=(10, 6))
         sns.scatterplot(data=df, x='total_price', y='transaction_count', hue='segment', palette='viridis')
         cluster_centers = scaler.inverse_transform(kmeans.cluster_centers_)
-        for idx, center in enumerate(cluster_centers):
-            plt.scatter(center[0], center[1], s=200, c='red', label=f'Cluster {idx} Center', marker='X')
+        # for idx, center in enumerate(cluster_centers):
+        #     plt.scatter(center[0], center[1], s=200, c='red', label=f'Cluster {idx} Center', marker='X')
         plt.title('Customer Segmentation Using K-Means Clustering')
         plt.xlabel('Total Sales')
         plt.ylabel('Transaction Count')
@@ -99,8 +99,12 @@ class RetailAnalytics:
         # Combine month and year into a single feature
         df['time'] = df['year'] + (df['month'] - 1) / 12
 
+        # Add seasonal features
+        df['month_sin'] = np.sin(2 * np.pi * df['month'] / 12)
+        df['month_cos'] = np.cos(2 * np.pi * df['month'] / 12)
+
         # Features and target
-        X = df[['avg_sales', 'transaction_count', 'purchase_frequency', 'time']]
+        X = df[['avg_sales', 'transaction_count', 'purchase_frequency', 'time', 'month_sin', 'month_cos']]
         y = df['total_price']
 
         # Train-test split
@@ -140,12 +144,14 @@ class RetailAnalytics:
 
         return {'model': model, 'mse': mse, 'r2': r2, 'y_test': y_test, 'y_pred': y_pred}
 
-
-
     def perform_future_forecasting(self, df, model):
         """Perform future sales forecasting."""
         # Generate future time periods (e.g., next 12 months)
-        future_months = pd.date_range(start='2024-01-01', end='2024-12-31', freq='M')
+        last_year = df['year'].max()
+        last_month = df['month'].max()
+        last_date = f"{int(last_year)}-{int(last_month)}-01"
+        
+        future_months = pd.date_range(start=last_date, periods=12, freq='M')
         future_df = pd.DataFrame({
             'month': future_months.month,
             'year': future_months.year,
@@ -157,8 +163,12 @@ class RetailAnalytics:
         future_df['transaction_count'] = df['transaction_count'].mean()
         future_df['purchase_frequency'] = df['purchase_frequency'].mean()
 
+        # Add seasonal features
+        future_df['month_sin'] = np.sin(2 * np.pi * future_df['month'] / 12)
+        future_df['month_cos'] = np.cos(2 * np.pi * future_df['month'] / 12)
+
         # Predict future sales
-        future_df['predicted_sales'] = model.predict(future_df[['avg_sales', 'transaction_count', 'purchase_frequency', 'time']])
+        future_df['predicted_sales'] = model.predict(future_df[['avg_sales', 'transaction_count', 'purchase_frequency', 'time', 'month_sin', 'month_cos']])
 
         # Visualize future sales forecast
         plt.figure(figsize=(10, 6))

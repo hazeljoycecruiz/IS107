@@ -1,10 +1,13 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from sqlalchemy import create_engine
 from D_DataMining import RetailAnalytics
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 # Database connection setup
 db_name = "data_warehouse"
@@ -31,8 +34,6 @@ data['customer_id'] = data['customer_id'].astype(str)
 data['time_id'] = data['time_id'].astype(str)
 data['year'] = data['year'].astype(int)
 
-    
-
 # Navigation sidebar
 st.sidebar.title("Choose a Visualization:")
 selected_module = st.sidebar.radio("", ["Data Visualization", "Data Mining"])
@@ -56,8 +57,7 @@ if selected_module == "Data Visualization":
     product = ["All"] + list(data['product_description'].unique())
     selected_product = st.sidebar.selectbox("Select Product", product)
 
-# Main content based on module selection
-if selected_module == "Data Visualization":
+    # Main content based on module selection
     # Filter data based on selections
     filtered_data = data
     if selected_country != "All":
@@ -177,6 +177,7 @@ if selected_module == "Data Visualization":
     ).reset_index(name='CLV')
 
     # Calculate Customer Retention Rate over time
+    # Calculates the ratio of unique customers in that month to the total number of unique customers.
     first_purchase = filtered_data.groupby('customer_id')['invoice_date'].min().reset_index()
     first_purchase['year_month'] = first_purchase['invoice_date'].apply(lambda x: pd.to_datetime(x).to_period('M'))
     retention_rate_over_time = first_purchase.groupby('year_month').apply(
@@ -209,45 +210,87 @@ if selected_module == "Data Visualization":
     )
 
 elif selected_module == "Data Mining":
-    # Visualizations from E_webApp.py and D_DataMining.py
+    # Initialize RetailAnalytics
     analytics = RetailAnalytics()
+    
+    # Load data
     df = analytics.load_data()
 
-    st.subheader("Customer Segmentation Analysis")
-    
-    # RFM Analysis
-    rfm_data, _ = analytics.perform_customer_segmentation(df)
-    
-    # Visualize segments
-    fig_segments = px.scatter(
-        rfm_data,
-        x='total_price',
-        y='transaction_count',
-        color='segment',
-        title='Customer Segments (RFM Analysis)'
+    # Customer Segmentation
+    st.header("Data Mining Visualization")
+    segmented_df, kmeans, cluster_summary = analytics.perform_customer_segmentation(df)
+    st.markdown(
+    """
+    This part uses K-Means for customer segmentation to groups customers into distinct clusters based on shared traits like spending, purchase frequency, and recency. This helps businesses identify patterns, such as high spenders or occasional shoppers, enabling personalized marketing and targeted strategies to boost retention and profitability. The clustering results offer actionable insights for prioritizing key customer groups.
+    """
     )
-    st.plotly_chart(fig_segments)
     
-    # Sales Prediction
-    st.subheader("Sales Prediction")
-    
-    prediction_results = analytics.perform_sales_prediction(df)
-    y_test = prediction_results['actual']
-    y_pred = prediction_results['predicted']
-    
-    # Plot actual vs predicted
-    fig_prediction = go.Figure()
-    fig_prediction.add_trace(go.Scatter(x=y_test.index, y=y_test, mode='markers', name='Actual Sales'))
-    fig_prediction.add_trace(go.Scatter(x=y_test.index, y=y_pred, mode='lines', name='Predicted Sales'))
-    fig_prediction.update_layout(title='Sales Prediction: Actual vs Predicted')
-    
-    st.plotly_chart(fig_prediction)
-    
-    # Model performance metrics
-    r2 = prediction_results['r2']
-    rmse = np.sqrt(prediction_results['mse'])
-    
-    st.write(f"Model Performance:")
-    st.write(f"R² Score: {r2:.3f}")
-    st.write(f"RMSE: ${rmse:,.2f}")
+    # Display cluster summary in a table
+    st.subheader("Cluster Summary")
+    st.table(cluster_summary.reset_index(drop=True))
 
+    # Visualize segments using Matplotlib and Seaborn
+    plt.figure(figsize=(10, 6))
+    sns.scatterplot(data=segmented_df, x='total_price', y='transaction_count', hue='segment', palette='viridis')
+    plt.title('Customer Segmentation Using K-Means Clustering')
+    plt.xlabel('Total Sales')
+    plt.ylabel('Transaction Count')
+    plt.legend()
+    st.pyplot(plt)
+    st.markdown(
+    """
+    The visualization of customer segmentation using K-Means clustering displays customer groups as distinct clusters based on features like spending and transaction frequency. Each cluster is represented by a unique color, making it easy to identify patterns and differentiate customer behaviors.
+    """
+    )
+
+    # Sales Prediction
+    st.header("Sales Prediction")
+    prediction_results = analytics.perform_sales_prediction(df)
+    y_test = prediction_results['y_test']
+    y_pred = prediction_results['y_pred']
+
+
+    # Plot actual vs predicted using Matplotlib and Seaborn
+    plt.figure(figsize=(10, 6))
+    sns.scatterplot(x=y_test, y=y_test, alpha=0.6, label='Actual Sales', color='blue')
+    sns.scatterplot(x=y_test, y=y_pred, alpha=0.6, label='Predicted Sales', color='orange')
+    plt.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], color='red', linestyle='--', label='Perfect Prediction')
+    plt.xlabel('Actual Total Sales')
+    plt.ylabel('Predicted Total Sales')
+    plt.title('Actual vs. Predicted Sales')
+    plt.legend()
+    st.pyplot(plt)
+
+    # Display sales prediction insights as a list
+    st.subheader("Sales Prediction Insights")
+    st.markdown(f"- **Mean Squared Error (MSE):** {prediction_results['mse']:.2f}")
+    st.markdown(f"- **R-squared:** {prediction_results['r2']:.2f}")
+
+    st.markdown(
+    """
+    The Actual vs. Predicted Sales visualization compares real sales values with model predictions using scatterplots. A reference line indicates perfect predictions, highlighting discrepancies. This helps assess model accuracy, supported by key metrics like Mean Squared Error (MSE) and R-squared, which quantify prediction performance and reliability.
+    """
+    )
+
+    # Future Forecasting
+    st.subheader("Future Sales Forecasting")
+    future_forecast = analytics.perform_future_forecasting(df, prediction_results['model'])
+    
+    # Visualize future sales forecast using Matplotlib
+    plt.figure(figsize=(10, 6))
+    plt.plot(future_forecast['time'], future_forecast['predicted_sales'], marker='o', label='Predicted Sales')
+    plt.title('Future Sales Forecast')
+    plt.xlabel('Date')
+    plt.ylabel('Predicted Sales')
+    plt.legend()
+    plt.grid()
+    st.pyplot(plt)
+
+    st.markdown(
+    """
+    This Future Sales Forecast visualization displays predicted sales over time, showing trends and patterns for upcoming periods which in this case is in the next 12 months after the last data provided. Using a line plot, it highlights expected sales values, helping businesses plan strategies and make data-driven decisions. The forecast provides a clear outlook on future performance based on historical data.
+    """
+    )
+
+    # Generate Report
+    analytics.generate_report(segmented_df, cluster_summary, prediction_results)
